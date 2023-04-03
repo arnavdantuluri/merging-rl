@@ -4,9 +4,11 @@ from typing import Optional, Union
 
 import numpy as np
 import torch
-from model_training.custom_datasets.formatting import QA_SPECIAL_TOKENS, format_pairs, format_system_prefix
+from custom_datasets.formatting import QA_SPECIAL_TOKENS
 from torch.nn import functional as F
 from transformers.tokenization_utils_base import PaddingStrategy, PreTrainedTokenizerBase, TruncationStrategy
+
+from .formatting import format_pairs, format_system_prefix
 
 
 @dataclass

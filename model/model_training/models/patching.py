@@ -8,15 +8,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
-from transformers import GPTNeoXForCausalLM, GPTNeoXModel, LlamaForCausalLM, LlamaModel
+from transformers import GPTNeoXForCausalLM, GPTNeoXModel
 
+from .modeling_llama import LLaMAForCausalLM, LLaMAModel
 from .reward_model import GPTNeoXRewardModel
 
 SUPPORTED_MODELS = [
     GPTNeoXModel,
     GPTNeoXForCausalLM,
-    LlamaForCausalLM,
-    LlamaModel,
+    LLaMAForCausalLM,
+    LLaMAModel,
     GPTNeoXRewardModel,
 ]
 
@@ -115,7 +116,7 @@ def patch_model(
         except ModuleNotFoundError:
             warnings.warn(
                 """\nmodule flash_attn not found - either install:
-  pip3 install flash_attn
+  pip3 install flash_atten
 or run with:
   --use_flash_attention=false """
             )
@@ -125,9 +126,6 @@ or run with:
 
     if resid_pdrop is not None and (resid_pdrop < 0 or resid_pdrop > 1.0):
         raise ValueError("Invalid argument: `resid_pdrop` must be between 0.0 and 1.0")
-
-    if not flash_attention and (resid_pdrop is None or resid_pdrop == 0.0):
-        return
 
     if not any(isinstance(model, model_class) for model_class in SUPPORTED_MODELS):
         if not flash_attention and (resid_pdrop is None or resid_pdrop == 0.0):
@@ -150,29 +148,29 @@ or run with:
     if isinstance(model, GPTNeoXRewardModel) or isinstance(model, GPTNeoXForCausalLM):
         model = model.gpt_neox
 
-    if isinstance(model, LlamaForCausalLM):
+    if isinstance(model, LLaMAForCausalLM):
         model = model.model
 
     attention_key_lookup = {
         GPTNeoXModel: "attention",
         GPTNeoXRewardModel: "attention",
-        LlamaModel: "self_attn",
+        LLaMAModel: "self_attn",
     }
     mlp_key_lookup = {
         GPTNeoXModel: "mlp",
         GPTNeoXRewardModel: "mlp",
-        LlamaModel: "mlp",
+        LLaMAModel: "mlp",
     }
     attention_key = attention_key_lookup.get(model.__class__, "attention")
     mlp_key = mlp_key_lookup.get(model.__class__, "mlp")
 
     for layer in model.layers:
-        if resid_pdrop is not None and resid_pdrop > 0:
+        if resid_pdrop is not None:
             add_dropout(getattr(layer, attention_key), _patched_attn_forward, resid_pdrop)
             add_dropout(getattr(layer, mlp_key), _patched_mlp_forward, resid_pdrop)
 
         if flash_attention:
-            if isinstance(model, LlamaModel):
+            if isinstance(model, LLaMAModel):
                 warnings.warn("Flash attention is not supported for LLaMA models.")
             else:
                 add_flash_attn(layer.attention, causal=True)

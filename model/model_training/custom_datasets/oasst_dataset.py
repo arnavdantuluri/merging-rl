@@ -27,7 +27,7 @@ def load_oasst_export(
     data_path: str | Path = None,
     mode: Literal["sft", "rm"] = "sft",
 ) -> tuple[ListDataset, ListDataset]:
-    if mode not in ("sft", "rm"):
+    if mode not in ("sft", "rm", "rl"):
         raise ValueError(f"Unknown dataset mode: {mode}")
 
     lang_codes = lang.split(",")
@@ -84,7 +84,12 @@ def load_oasst_export(
                     and len([r for r in thread[-1].replies if r.rank is not None]) > 1
                     and thread_filter(thread)
                 )
-
+            elif mode == "rl":
+                return (
+                    thread[-1].role == "prompter"
+                    and thread_filter(thread)
+                    and not (thread[-1].role == "assistant")
+                )
             raise RuntimeError()
 
         visit_threads_depth_first(tree.prompt, visitor=threads.append, predicate=leaf_filter)
@@ -99,6 +104,12 @@ def load_oasst_export(
         if mode == "sft":
             return [m.text for m in thread]
         elif mode == "rm":
+            prefix = [m.text for m in thread]
+            replies = [r for r in thread[-1].replies if r.role == "assistant" and r.rank is not None]
+            replies = sorted(replies, key=lambda r: r.rank)
+            replies = [r.text for r in replies]
+            return (prefix, replies)
+        elif mode == "rl":
             prefix = [m.text for m in thread]
             replies = [r for r in thread[-1].replies if r.role == "assistant" and r.rank is not None]
             replies = sorted(replies, key=lambda r: r.rank)
