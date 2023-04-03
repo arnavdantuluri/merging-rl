@@ -1,5 +1,5 @@
 from model_training.custom_datasets.rank_datasets import HFDataset
-from reward.instructor.rank_datasets import AnthropicRLHF
+from rank_datasets import AnthropicRLHF
 
 
 def load_anthroopic_rlhf():

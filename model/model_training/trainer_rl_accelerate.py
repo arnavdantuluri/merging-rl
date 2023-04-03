@@ -1,11 +1,15 @@
 import os
 from typing import List
 
+import argparse
+import random
+from argparse import Namespace
 import torch
 import yaml
 from trlx.trlx import train
 from trlx.data.configs import TRLConfig
 import deepspeed
+from utils.utils import _strtobool, get_dataset, get_model, read_yamls
 
 import math
 from model_training.custom_datasets.formatting import QA_SPECIAL_TOKENS, format_pairs
@@ -32,12 +36,44 @@ import pathlib
 from typing import Dict, List
 import json
 
-
-directory = os.getcwd()
-reward_name = "andreaskoepf/oasst-rm-1-pythia-1b"
-sft_model_name = "OpenAssistant/oasst-sft-1-pythia-12b"
 file_path = "2023-03-13_oasst_ready_labels.jsonl.gz"
-max_tokens = 256
+
+def argument_parsing(notebook=False, notebook_args=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--configs", nargs="+", default="config_rl.yaml")
+    parser.add_argument("--local_rank", type=int, default=-1)
+    parser.add_argument("--wandb-entity", type=str, default="open-assistant")
+
+    if notebook:
+        args, remaining = parser.parse_known_args(notebook_args)
+    else:
+        args, remaining = parser.parse_known_args()
+
+    # Config from YAML
+    conf = {}
+    configs = read_yamls("./configs")
+    for name in args.configs:
+        if "," in name:
+            for n in name.split(","):
+                conf.update(configs[n])
+        else:
+            conf.update(configs[name])
+
+    conf["local_rank"] = args.local_rank
+
+    # Override config from command-line
+    parser = argparse.ArgumentParser()
+    for key, value in conf.items():
+        type_ = type(value) if value is not None else str
+        if type_ == bool:
+            type_ = _strtobool
+        parser.add_argument(f"--{key}", type=type_, default=value)
+
+    return parser.parse_args(remaining)
+
+training_conf = argument_parsing()
+rank_config = Namespace(**training_conf.rank_config)
+
 
 QA_SPECIAL_TOKENS_V2_5 = {
     "prompter": "<|prompter|>",
@@ -48,9 +84,10 @@ QA_SPECIAL_TOKENS_V2_5 = {
     "eos": "<|endoftext|>",
 }
 
-rm_model, rm_tokenizer = AutoModelForSequenceClassification.from_pretrained(reward_name), AutoTokenizer.from_pretrained(reward_name, padding_side="left")
+directory = os.getcwd()
+rm_tokenizer = AutoTokenizer.from_pretrained(rank_config.model_name, padding_side=rank_config.padding_side)
+rm_model = get_model(rank_config, rm_tokenizer)
 rm_model.eval()
-rm_model.gradient_checkpointing_enable()
 rm_device = torch.cuda.device_count() - 1
 rm_model = rm_model.to(rm_device)
 
@@ -120,18 +157,23 @@ def rank_model_fn(samples, **kwargs):
             out.extend(rewards)
     return out
 
-with open(directory + '/configs/ppo_config_summ_gptj.yaml') as f:
+sft_config = Namespace(**training_conf.sft_config)
+
+with open(directory + '/configs/ppo_config.yaml') as f:
     default_config = yaml.safe_load(f)
 
 trlx_config = TRLConfig.update(default_config, {})
 
-trlx_config.tokenizer.tokenizer_path = sft_model_name
-trlx_config.model.model_path = sft_model_name
-trlx_config.method.gen_kwargs["max_new_tokens"] = max_tokens
-trlx_config.train.batch_size = 8
+trlx_config.tokenizer.tokenizer_path = sft_config.model_name
+trlx_config.model.model_path = sft_config.model_name
+trlx_config.method.gen_kwargs["max_new_tokens"] = 400
+trlx_config.train.batch_size = int(training_conf.batch_size)
+trlx_config.method.chunk_size = int(training_conf.chunk_size)
+trlx_config.method.num_rollouts = int(training_conf.num_rollouts)
+trlx_config.train.epochs = int(training_conf.epochs)
 
 trainer = train(
-    sft_model_name,
+    sft_config.model_name,
     reward_fn=rank_model_fn,
     prompts=prompts, 
     eval_prompts=val_prompts,
